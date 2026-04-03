@@ -52,6 +52,46 @@
         state: present
         update_cache: yes
 
+    - name: Configure systemd-zram-generator defaults
+      copy:
+        dest: /etc/systemd/zram-generator.conf
+        content: |
+          [zram0]
+          zram-size = min(ram / 2, 4096)
+          compression-algorithm = zstd
+          swap-priority = 100
+        owner: root
+        group: root
+        mode: '0644'
+      register: zram_config
+
+    - name: Refresh systemd generator
+      systemd:
+        daemon_reload: yes
+      when: zram_config.changed
+
+    - name: Fix and Optimize Btrfs FSTAB entries
+      lineinfile:
+        path: /etc/fstab
+        regexp: "^{{ item.dev }}.*btrfs"
+        line: "{{ item.dev }} {{ item.mnt }} btrfs {{ item.opts }} 0 {{ item.pass }}"
+      loop:
+        - { dev: '/dev/mapper/jdesktop--vg-root', mnt: '/', opts: 'defaults,subvol=@rootfs,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag', pass: '0' }
+        - { dev: 'UUID=5efd422d-9ce0-49a4-b4b7-dfba42d9e434', mnt: '/mnt/z', opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail,x-gvfs-show,x-gvfs-name=z', pass: '0' }
+        - { dev: 'UUID=d59767b0-cc74-4acc-93fb-25e24f53449e', mnt: '/mnt/g', opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail,x-gvfs-show,x-gvfs-name=g', pass: '0' }
+      notify: Remount all filesystems
+
+    - name: Configure btrfsmaintenance services
+      lineinfile:
+        path: /etc/default/btrfsmaintenance
+        regexp: "^{{ item.key }}="
+        line: '{{ item.key }}="{{ item.value }}"'
+      loop:
+        - { key: 'BTRFS_BALANCE_PERIOD', value: 'monthly' }
+        - { key: 'BTRFS_SCRUB_PERIOD', value: 'monthly' }
+        - { key: 'BTRFS_TRIM_PERIOD', value: 'none' }
+      notify: Refresh btrfsmaintenance
+
     - name: Remove conflicting PulseAudio Bluetooth module
       apt:
         name: pulseaudio-module-bluetooth
@@ -64,17 +104,15 @@
         enabled: yes
         state: started
 
-    - name: Configure UFW rules for Discord/Syncthing and Arma 3
+    - name: Configure UFW rules
       ufw:
         rule: allow
         port: "{{ item.port }}"
         proto: "{{ item.proto }}"
       loop:
-        - { port: '22000', proto: 'tcp' } # Discord/Syncthing
+        - { port: '22000', proto: 'tcp' }
         - { port: '22000', proto: 'udp' }
         - { port: '21027', proto: 'udp' }
-        # Add Arma 3 ports here if needed, e.g.:
-        # - { port: '2302', proto: 'udp' } 
 
     - name: Enable UFW
       ufw:
@@ -91,48 +129,13 @@
         - pipewire-pulse
         - wireplumber
 
-    - name: Configure systemd-zram-generator defaults
-      copy:
-        dest: /etc/systemd/zram-generator.conf
-        content: |
-          [zram0]
-          # Sets zRAM size to half of available RAM, capped at 4GB
-          zram-size = min(ram / 2, 4096)
-          compression-algorithm = zstd
-          swap-priority = 100
-          mount-point = /dev/zram0
-        owner: root
-        group: root
-        mode: '0644'
-      register: zram_config
-
-    - name: Refresh systemd generator and start zram
-      shell: |
-        systemctl daemon-reload
-        systemctl start /dev/zram0
-      when: zram_config.changed
-
-    - name: Optimize Btrfs mount options in fstab
-      replace:
-        path: /etc/fstab
-        regexp: '(btrfs\s+)(defaults|subvol=[^\s,]+)(.*?\s+0\s+[0-9])'
-        replace: '\1\2,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag\3'
-      notify: Remount all filesystems
-
-    - name: Configure btrfsmaintenance services
-      lineinfile:
-        path: /etc/default/btrfsmaintenance
-        regexp: "^{{ item.key }}="
-        line: '{{ item.key }}="{{ item.value }}"'
-      loop:
-        - { key: 'BTRFS_BALANCE_PERIOD', value: 'monthly' }
-        - { key: 'BTRFS_SCRUB_PERIOD', value: 'monthly' }
-        - { key: 'BTRFS_TRIM_PERIOD', value: 'none' } # Set to none because we use discard=async
-      notify: Refresh btrfsmaintenance
-
   handlers:
     - name: Remount all filesystems
       shell: mount -a
 
     - name: Refresh btrfsmaintenance
-      shell: btrfsmaintenance-refresh-cron.sh
+      shell: |
+        if [ -x /usr/share/btrfsmaintenance/btrfsmaintenance-refresh-cron.sh ]; then
+          /usr/share/btrfsmaintenance/btrfsmaintenance-refresh-cron.sh
+        fi
+        systemctl daemon-reload
