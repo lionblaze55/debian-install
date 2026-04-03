@@ -1,5 +1,5 @@
 ---
-- name: Setup Minimal Sway Environment on Debian 13
+- name: Setup Minimal Sway Environment (Universal)
   hosts: localhost
   connection: local
   become: true
@@ -54,20 +54,20 @@
 
     - name: Fix NetworkManager "Unmanaged" status
       block:
-        - name: Allow NetworkManager to manage interfaces in /etc/NetworkManager/NetworkManager.conf
+        - name: Set NetworkManager to managed=true
           ini_file:
             path: /etc/NetworkManager/NetworkManager.conf
             section: ifupdown
             option: managed
             value: "true"
 
-        - name: Comment out physical interfaces in /etc/network/interfaces to prevent conflicts
+        - name: Comment out physical interfaces in legacy config
           replace:
             path: /etc/network/interfaces
             regexp: '^(allow-hotplug|iface|auto) (enp|wlp|eth|wlan)'
             replace: '# \1 \2'
 
-        - name: Restart NetworkManager to pick up changes
+        - name: Restart NetworkManager
           systemd:
             name: NetworkManager
             state: restarted
@@ -90,18 +90,31 @@
         daemon_reload: yes
       when: zram_config.changed
 
-    - name: Clean and Optimize Btrfs FSTAB entries
-      lineinfile:
-        path: /etc/fstab
-        regexp: "^{{ item.dev | regex_escape }}.*btrfs"
-        line: "{{ item.dev }} {{ item.mnt }} btrfs {{ item.opts }} 0 {{ item.pass }}"
-      loop:
-        - { dev: '/dev/mapper/jdesktop--vg-root', mnt: '/', opts: 'defaults,subvol=@rootfs,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag', pass: '0' }
-        - { dev: 'UUID=5efd422d-9ce0-49a4-b4b7-dfba42d9e434', mnt: '/mnt/z', opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail,x-gvfs-show,x-gvfs-name=z', pass: '0' }
-        - { dev: 'UUID=d59767b0-cc74-4acc-93fb-25e24f53449e', mnt: '/mnt/g', opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail,x-gvfs-show,x-gvfs-name=g', pass: '0' }
-      notify: Remount all filesystems
+    - name: Purge incorrect root fstab entries (Cleanup)
+      mount:
+        path: /
+        # If we are on jdesktop, remove the jlaptop line (and vice versa)
+        src: "/dev/mapper/{{ 'jlaptop' if ansible_hostname == 'jdesktop' else 'jdesktop' }}--vg-root"
+        fstype: btrfs
+        state: absent
 
-    - name: Configure btrfsmaintenance periods
+    - name: Optimize Btrfs Mounts (Host Aware)
+      mount:
+        path: "{{ item.mnt }}"
+        src: "{{ item.dev }}"
+        fstype: btrfs
+        opts: "{{ item.opts }}"
+        dump: "0"
+        passno: "0"
+        state: present
+      loop:
+        # Dynamically builds the root path based on the current machine's hostname
+        - { dev: "/dev/mapper/{{ ansible_hostname }}--vg-root", mnt: '/', opts: 'defaults,subvol=@rootfs,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag' }
+        # Storage drives (These stay constant across both machines)
+        - { dev: 'UUID=5efd422d-9ce0-49a4-b4b7-dfba42d9e434', mnt: '/mnt/z', opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail,x-gvfs-show,x-gvfs-name=z' }
+        - { dev: 'UUID=d59767b0-cc74-4acc-93fb-25e24f53449e', mnt: '/mnt/g', opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail,x-gvfs-show,x-gvfs-name=g' }
+
+    - name: Configure btrfsmaintenance
       lineinfile:
         path: /etc/default/btrfsmaintenance
         regexp: "^{{ item.key }}="
@@ -112,19 +125,19 @@
         - { key: 'BTRFS_TRIM_PERIOD', value: 'none' }
       notify: Refresh btrfsmaintenance
 
-    - name: Remove conflicting PulseAudio Bluetooth module
+    - name: Remove PulseAudio Bluetooth conflict
       apt:
         name: pulseaudio-module-bluetooth
         state: absent
         purge: yes
 
-    - name: Enable and start Bluetooth service
+    - name: Enable Bluetooth
       systemd:
         name: bluetooth
         enabled: yes
         state: started
 
-    - name: Configure UFW rules
+    - name: Configure Firewall Rules
       ufw:
         rule: allow
         port: "{{ item.port }}"
@@ -134,11 +147,11 @@
         - { port: '22000', proto: 'udp' }
         - { port: '21027', proto: 'udp' }
 
-    - name: Enable UFW
+    - name: Enable Firewall
       ufw:
         state: enabled
 
-    - name: Restart PipeWire services (User level)
+    - name: Restart User PipeWire
       become: false
       systemd:
         name: "{{ item }}"
@@ -150,9 +163,6 @@
         - wireplumber
 
   handlers:
-    - name: Remount all filesystems
-      shell: mount -a
-
     - name: Refresh btrfsmaintenance
       shell: |
         if [ -x /usr/share/btrfsmaintenance/btrfsmaintenance-refresh-cron.sh ]; then
