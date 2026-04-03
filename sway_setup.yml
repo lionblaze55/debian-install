@@ -52,18 +52,25 @@
         state: present
         update_cache: yes
 
-    - name: Disable legacy Debian networking to favor NetworkManager
-      systemd:
-        name: networking
-        enabled: no
-        state: stopped
-      ignore_errors: yes
+    - name: Fix NetworkManager "Unmanaged" status
+      block:
+        - name: Allow NetworkManager to manage interfaces in /etc/NetworkManager/NetworkManager.conf
+          ini_file:
+            path: /etc/NetworkManager/NetworkManager.conf
+            section: ifupdown
+            option: managed
+            value: "true"
 
-    - name: Ensure NetworkManager is enabled
-      systemd:
-        name: NetworkManager
-        enabled: yes
-        state: started
+        - name: Comment out physical interfaces in /etc/network/interfaces to prevent conflicts
+          replace:
+            path: /etc/network/interfaces
+            regexp: '^(allow-hotplug|iface|auto) (enp|wlp|eth|wlan)'
+            replace: '# \1 \2'
+
+        - name: Restart NetworkManager to pick up changes
+          systemd:
+            name: NetworkManager
+            state: restarted
 
     - name: Configure systemd-zram-generator
       copy:
@@ -86,7 +93,6 @@
     - name: Clean and Optimize Btrfs FSTAB entries
       lineinfile:
         path: /etc/fstab
-        # Matches the device identifier and 'btrfs' anywhere on the line
         regexp: "^{{ item.dev | regex_escape }}.*btrfs"
         line: "{{ item.dev }} {{ item.mnt }} btrfs {{ item.opts }} 0 {{ item.pass }}"
       loop:
@@ -118,7 +124,7 @@
         enabled: yes
         state: started
 
-    - name: Configure UFW rules (Discord/Syncthing)
+    - name: Configure UFW rules
       ufw:
         rule: allow
         port: "{{ item.port }}"
