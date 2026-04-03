@@ -68,9 +68,6 @@
         method: user
         state: present
         remote: flathub
-      # 1. Lookup the file (returns a string)
-      # 2. Split by newline to create a list
-      # 3. Reject empty lines (in case there's a trailing newline in the file)
       loop: "{{ lookup('file', ansible_hostname + '/flatpak.txt', errors='ignore').split('\n') | reject('equalto', '') | list }}"
       when: lookup('file', ansible_hostname + '/flatpak.txt', errors='ignore') != ""
 
@@ -115,23 +112,34 @@
     - name: Purge incorrect root entries from fstab
       lineinfile:
         path: /etc/fstab
-        # Removes any /dev/mapper root lines that DO NOT match the current hostname
         regexp: "^/dev/mapper/(?!{{ ansible_hostname }}--vg-root).+--vg-root"
         state: absent
 
-    - name: Optimize Btrfs Mounts
+    - name: Optimize Root Btrfs Mount
       mount:
-        path: "{{ item.mnt }}"
-        src: "{{ item.dev }}"
+        path: '/'
+        src: "/dev/mapper/{{ ansible_hostname }}--vg-root"
         fstype: btrfs
-        opts: "{{ item.opts }}"
+        opts: 'defaults,subvol=@rootfs,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag'
         dump: "0"
         passno: "0"
         state: present
-      loop:
-        - { dev: "/dev/mapper/{{ ansible_hostname }}--vg-root", mnt: '/', opts: 'defaults,subvol=@rootfs,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag' }
-        - { dev: 'UUID=5efd422d-9ce0-49a4-b4b7-dfba42d9e434', mnt: '/mnt/z', opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail,x-gvfs-show,x-gvfs-name=z' }
-        - { dev: 'UUID=d59767b0-cc74-4acc-93fb-25e24f53449e', mnt: '/mnt/g', opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail,x-gvfs-show,x-gvfs-name=g' }
+
+    - name: Dynamically Optimize Non-Root Btrfs Mounts
+      mount:
+        path: "{{ item.mount }}"
+        src: "{{ item.device }}"
+        fstype: btrfs
+        # We preserve existing mount options but append/ensure your performance flags
+        opts: "defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail"
+        dump: "0"
+        passno: "0"
+        state: present
+      loop: "{{ ansible_mounts }}"
+      when: 
+        - item.fstype == 'btrfs'
+        - item.mount != '/'
+        - "'vg-root' not in item.device"
 
     - name: Configure btrfsmaintenance
       lineinfile:
@@ -156,7 +164,7 @@
         enabled: yes
         state: started
 
-    - name: Enable lingering for local user (Fixes --user systemd)
+    - name: Enable lingering for local user
       command: "loginctl enable-linger {{ ansible_user_id }}"
       args:
         creates: "/var/lib/systemd/linger/{{ ansible_user_id }}"
@@ -176,12 +184,12 @@
     - name: Configure Firewall Rules
       ufw:
         rule: allow
-        port: "{{ item.port }}"
+        port: "{{ item.port | string }}"
         proto: "{{ item.proto }}"
       loop:
-        - { port: '22000', proto: 'tcp' }
-        - { port: '22000', proto: 'udp' }
-        - { port: '21027', proto: 'udp' }
+        - { port: 22000, proto: 'tcp' }
+        - { port: 22000, proto: 'udp' }
+        - { port: 21027, proto: 'udp' }
 
     - name: Enable Firewall
       ufw:
