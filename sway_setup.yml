@@ -59,6 +59,16 @@
       register: flathub_result
       changed_when: "'added' in flathub_result.stdout"
 
+    - name: Install host-specific Flatpaks for the local user
+      become: false
+      flatpak:
+        name: "{{ item }}"
+        method: user
+        state: present
+        remote: flathub
+      loop: "{{ lookup('file', ansible_hostname + '/flatpak.txt').splitlines() }}"
+      when: (ansible_hostname + '/flatpak.txt') is file
+
     - name: Fix NetworkManager "Unmanaged" status
       block:
         - name: Set NetworkManager to managed=true
