@@ -3,8 +3,11 @@
   hosts: localhost
   connection: local
   become: true
-  tasks:
+  vars:
+    # Dynamically find the user's runtime directory for systemd --user tasks
+    user_runtime_dir: "/run/user/{{ ansible_effective_user_id }}"
 
+  tasks:
     - name: Install core packages, Sway, and desktop utilities
       apt:
         name:
@@ -18,7 +21,6 @@
           - swaybg
           - swayidle
           - swaylock
-          - grimshot
           - foot
           - pipewire
           - wireplumber
@@ -61,14 +63,15 @@
         method: user
         flatpakrepo_url: https://dl.flathub.org/repo/flathub.flatpakrepo
 
-    - name: Install host-specific Flatpaks (Safe Lookup)
+    - name: Install host-specific Flatpaks (Resilient Lookup)
       become: false
       flatpak:
         name: "{{ item }}"
         method: user
         state: present
         remote: flathub
-      loop: "{{ lookup('file', ansible_hostname + '/flatpak.txt', errors='ignore').split('\n') | reject('equalto', '') | list }}"
+      # Filters out empty lines and handles missing files gracefully
+      loop: "{{ lookup('file', ansible_hostname + '/flatpak.txt', errors='ignore').split('\n') | reject('match', '^\\s*$') | list }}"
       when: lookup('file', ansible_hostname + '/flatpak.txt', errors='ignore') != ""
 
     - name: Configure NetworkManager
@@ -85,11 +88,7 @@
             path: /etc/network/interfaces
             regexp: '^(allow-hotplug|iface|auto) (enp|wlp|eth|wlan)'
             replace: '# \1 \2'
-
-        - name: Restart NetworkManager
-          systemd:
-            name: NetworkManager
-            state: restarted
+      notify: Restart NetworkManager
 
     - name: Configure systemd-zram-generator
       copy:
@@ -104,9 +103,11 @@
         mode: '0644'
       register: zram_config
 
-    - name: Refresh systemd generator
+    - name: Refresh systemd and start zram
       systemd:
         daemon_reload: yes
+        name: /dev/zram0
+        state: started
       when: zram_config.changed
 
     - name: Purge incorrect root entries from fstab
@@ -115,31 +116,17 @@
         regexp: "^/dev/mapper/(?!{{ ansible_hostname }}--vg-root).+--vg-root"
         state: absent
 
-    - name: Optimize Root Btrfs Mount
-      mount:
-        path: '/'
-        src: "/dev/mapper/{{ ansible_hostname }}--vg-root"
-        fstype: btrfs
-        opts: 'defaults,subvol=@rootfs,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag'
-        dump: "0"
-        passno: "0"
-        state: present
-
-    - name: Dynamically Optimize Non-Root Btrfs Mounts
+    - name: Optimize Btrfs Mounts
       mount:
         path: "{{ item.mount }}"
         src: "{{ item.device }}"
         fstype: btrfs
-        # We preserve existing mount options but append/ensure your performance flags
-        opts: "defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail"
+        opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag'
         dump: "0"
         passno: "0"
         state: present
       loop: "{{ ansible_mounts }}"
-      when: 
-        - item.fstype == 'btrfs'
-        - item.mount != '/'
-        - "'vg-root' not in item.device"
+      when: item.fstype == 'btrfs'
 
     - name: Configure btrfsmaintenance
       lineinfile:
@@ -176,10 +163,12 @@
         state: started
         enabled: yes
         scope: user
+      environment:
+        XDG_RUNTIME_DIR: "{{ user_runtime_dir }}"
       loop:
-        - pipewire
-        - pipewire-pulse
-        - wireplumber
+        - pipewire.service
+        - pipewire-pulse.service
+        - wireplumber.service
 
     - name: Configure Firewall Rules
       ufw:
@@ -196,6 +185,11 @@
         state: enabled
 
   handlers:
+    - name: Restart NetworkManager
+      systemd:
+        name: NetworkManager
+        state: restarted
+
     - name: Refresh btrfsmaintenance
       shell: |
         if [ -x /usr/share/btrfsmaintenance/btrfsmaintenance-refresh-cron.sh ]; then
