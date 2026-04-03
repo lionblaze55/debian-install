@@ -1,0 +1,92 @@
+---
+- name: Setup Minimal Sway Environment on Debian 13
+  hosts: localhost
+  connection: local
+  become: true
+  tasks:
+
+    - name: Install core packages, Sway, and desktop utilities
+      apt:
+        name:
+          - fastfetch
+          - btrfsmaintenance
+          - lxqt-policykit
+          - sway-notification-center
+          - thunar
+          - distrobox
+          - sway
+          - swaybg
+          - swayidle
+          - swaylock
+          - grimshot
+          - foot
+          - pipewire
+          - wireplumber
+          - pavucontrol
+          - network-manager
+          - systemd-zram-generator
+          - xdg-desktop-portal-wlr
+          - xdg-desktop-portal-gtk
+          - fuzzel
+          - git
+          - flatpak
+          - xwayland
+          - firefox-esr
+          - gamemode
+          - fonts-font-awesome
+          - fonts-noto-core
+          - fonts-noto-mono
+          - fonts-noto-color-emoji
+          - gnome-disk-utility
+          - network-manager-applet
+          - power-profiles-daemon
+          - ufw
+          - cups
+          - vim
+          - stow
+          - htop
+          - waybar
+          - libspa-0.2-bluetooth
+          - bluez
+          - blueman
+        state: present
+        update_cache: yes
+
+    - name: Remove conflicting PulseAudio Bluetooth module
+      apt:
+        name: pulseaudio-module-bluetooth
+        state: absent
+        purge: yes
+
+    - name: Enable and start Bluetooth service
+      systemd:
+        name: bluetooth
+        enabled: yes
+        state: started
+
+    - name: Configure UFW rules for Discord/Syncthing and Arma 3
+      ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto }}"
+      loop:
+        - { port: '22000', proto: 'tcp' } # Discord/Syncthing
+        - { port: '22000', proto: 'udp' }
+        - { port: '21027', proto: 'udp' }
+        # Add Arma 3 ports here if needed, e.g.:
+        # - { port: '2302', proto: 'udp' } 
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+
+    - name: Restart PipeWire services (User level)
+      become: false
+      systemd:
+        name: "{{ item }}"
+        state: restarted
+        scope: user
+      loop:
+        - pipewire
+        - pipewire-pulse
+        - wireplumber
