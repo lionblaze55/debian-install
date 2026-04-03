@@ -52,6 +52,13 @@
         state: present
         update_cache: yes
 
+    - name: Enable Flathub repository for the local user
+      become: false
+      shell: |
+        flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      register: flathub_result
+      changed_when: "'added' in flathub_result.stdout"
+
     - name: Fix NetworkManager "Unmanaged" status
       block:
         - name: Set NetworkManager to managed=true
