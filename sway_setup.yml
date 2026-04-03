@@ -90,3 +90,49 @@
         - pipewire
         - pipewire-pulse
         - wireplumber
+
+    - name: Configure systemd-zram-generator defaults
+      copy:
+        dest: /etc/systemd/zram-generator.conf
+        content: |
+          [zram0]
+          # Sets zRAM size to half of available RAM, capped at 4GB
+          zram-size = min(ram / 2, 4096)
+          compression-algorithm = zstd
+          swap-priority = 100
+          mount-point = /dev/zram0
+        owner: root
+        group: root
+        mode: '0644'
+      register: zram_config
+
+    - name: Refresh systemd generator and start zram
+      shell: |
+        systemctl daemon-reload
+        systemctl start /dev/zram0
+      when: zram_config.changed
+
+    - name: Optimize Btrfs mount options in fstab
+      replace:
+        path: /etc/fstab
+        regexp: '(btrfs\s+)(defaults|subvol=[^\s,]+)(.*?\s+0\s+[0-9])'
+        replace: '\1\2,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag\3'
+      notify: Remount all filesystems
+
+    - name: Configure btrfsmaintenance services
+      lineinfile:
+        path: /etc/default/btrfsmaintenance
+        regexp: "^{{ item.key }}="
+        line: '{{ item.key }}="{{ item.value }}"'
+      loop:
+        - { key: 'BTRFS_BALANCE_PERIOD', value: 'monthly' }
+        - { key: 'BTRFS_SCRUB_PERIOD', value: 'monthly' }
+        - { key: 'BTRFS_TRIM_PERIOD', value: 'none' } # Set to none because we use discard=async
+      notify: Refresh btrfsmaintenance
+
+  handlers:
+    - name: Remount all filesystems
+      shell: mount -a
+
+    - name: Refresh btrfsmaintenance
+      shell: btrfsmaintenance-refresh-cron.sh
