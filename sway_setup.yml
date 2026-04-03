@@ -68,8 +68,11 @@
         method: user
         state: present
         remote: flathub
-      # query handles missing files gracefully without crashing the playbook
-      loop: "{{ query('file', ansible_hostname + '/flatpak.txt', errors='ignore') | map('splitlines') | flatten }}"
+      # 1. Lookup the file (returns a string)
+      # 2. Split by newline to create a list
+      # 3. Reject empty lines (in case there's a trailing newline in the file)
+      loop: "{{ lookup('file', ansible_hostname + '/flatpak.txt', errors='ignore').split('\n') | reject('equalto', '') | list }}"
+      when: lookup('file', ansible_hostname + '/flatpak.txt', errors='ignore') != ""
 
     - name: Configure NetworkManager
       block:
