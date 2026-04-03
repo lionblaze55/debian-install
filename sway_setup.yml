@@ -51,25 +51,27 @@
           - blueman
         state: present
         update_cache: yes
+        cache_valid_time: 3600
 
     - name: Enable Flathub repository for the local user
       become: false
-      shell: |
-        flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-      register: flathub_result
-      changed_when: "'added' in flathub_result.stdout"
+      flatpak_remote:
+        name: flathub
+        state: present
+        method: user
+        flatpakrepo_url: https://dl.flathub.org/repo/flathub.flatpakrepo
 
-    - name: Install host-specific Flatpaks for the local user
+    - name: Install host-specific Flatpaks (Safe Lookup)
       become: false
       flatpak:
         name: "{{ item }}"
         method: user
         state: present
         remote: flathub
-      loop: "{{ lookup('file', ansible_hostname + '/flatpak.txt').splitlines() }}"
-      when: (ansible_hostname + '/flatpak.txt') is file
+      # query handles missing files gracefully without crashing the playbook
+      loop: "{{ query('file', ansible_hostname + '/flatpak.txt', errors='ignore') | map('splitlines') | flatten }}"
 
-    - name: Fix NetworkManager "Unmanaged" status
+    - name: Configure NetworkManager
       block:
         - name: Set NetworkManager to managed=true
           ini_file:
@@ -107,14 +109,14 @@
         daemon_reload: yes
       when: zram_config.changed
 
-    - name: Purge ghost root entry (Safely delete line only)
+    - name: Purge incorrect root entries from fstab
       lineinfile:
         path: /etc/fstab
-        # If hostname is jdesktop, regex matches jlaptop (and vice versa)
-        regexp: "^/dev/mapper/{{ 'jlaptop' if ansible_hostname == 'jdesktop' else 'jdesktop' }}--vg-root"
+        # Removes any /dev/mapper root lines that DO NOT match the current hostname
+        regexp: "^/dev/mapper/(?!{{ ansible_hostname }}--vg-root).+--vg-root"
         state: absent
 
-    - name: Optimize Btrfs Mounts (Host Aware)
+    - name: Optimize Btrfs Mounts
       mount:
         path: "{{ item.mnt }}"
         src: "{{ item.dev }}"
@@ -122,7 +124,7 @@
         opts: "{{ item.opts }}"
         dump: "0"
         passno: "0"
-        state: present  # "present" only modifies fstab; it does NOT trigger mount/umount
+        state: present
       loop:
         - { dev: "/dev/mapper/{{ ansible_hostname }}--vg-root", mnt: '/', opts: 'defaults,subvol=@rootfs,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag' }
         - { dev: 'UUID=5efd422d-9ce0-49a4-b4b7-dfba42d9e434', mnt: '/mnt/z', opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail,x-gvfs-show,x-gvfs-name=z' }
@@ -151,6 +153,23 @@
         enabled: yes
         state: started
 
+    - name: Enable lingering for local user (Fixes --user systemd)
+      command: "loginctl enable-linger {{ ansible_user_id }}"
+      args:
+        creates: "/var/lib/systemd/linger/{{ ansible_user_id }}"
+
+    - name: Ensure User PipeWire services are running
+      become: false
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+        scope: user
+      loop:
+        - pipewire
+        - pipewire-pulse
+        - wireplumber
+
     - name: Configure Firewall Rules
       ufw:
         rule: allow
@@ -164,17 +183,6 @@
     - name: Enable Firewall
       ufw:
         state: enabled
-
-    - name: Restart User PipeWire
-      become: false
-      systemd:
-        name: "{{ item }}"
-        state: restarted
-        scope: user
-      loop:
-        - pipewire
-        - pipewire-pulse
-        - wireplumber
 
   handlers:
     - name: Refresh btrfsmaintenance
