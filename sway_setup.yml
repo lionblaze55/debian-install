@@ -138,12 +138,12 @@
         passno: "0"
         state: present
 
-    - name: Dynamically Optimize Non-Root Btrfs Mounts
+    - name: Dynamically Optimize Non-Root Btrfs Mounts (Persistent via UUID)
       mount:
         path: "{{ item.mount }}"
-        src: "{{ item.device }}"
+        # Use UUID instead of /dev/sdX to prevent issues when drive order changes
+        src: "UUID={{ item.uuid }}"
         fstype: btrfs
-        # We preserve existing mount options but append/ensure your performance flags
         opts: "defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail"
         dump: "0"
         passno: "0"
@@ -153,6 +153,7 @@
         - item.fstype == 'btrfs'
         - item.mount != '/'
         - "'vg-root' not in item.device"
+        - item.uuid is defined
 
     - name: Enable Btrfs maintenance timers
       systemd:
