@@ -8,6 +8,9 @@
     - name: Install core packages, Sway, and desktop utilities
       apt:
         name:
+          - brightnessctl
+          - adwaita-icon-theme-full
+          - xdg-user-dirs
           - fastfetch
           - btrfsmaintenance
           - lxqt-policykit
@@ -70,6 +73,16 @@
         remote: flathub
       loop: "{{ lookup('file', ansible_hostname + '/flatpak.txt', errors='ignore').split('\n') | reject('equalto', '') | list }}"
       when: lookup('file', ansible_hostname + '/flatpak.txt', errors='ignore') != ""
+
+    - name: System Cleanup
+      apt:
+        autoremove: yes
+        purge: yes
+
+    - name: Flatpak Cleanup
+      become: false
+      command: flatpak uninstall --unused -y
+      changed_when: false
 
     - name: Configure NetworkManager
       block:
@@ -140,6 +153,15 @@
         - item.fstype == 'btrfs'
         - item.mount != '/'
         - "'vg-root' not in item.device"
+
+    - name: Enable Btrfs maintenance timers
+      systemd:
+        name: "{{ item }}"
+        enabled: yes
+        state: started
+      loop:
+        - btrfs-scrub.timer
+        - btrfs-balance.timer
 
     - name: Configure btrfsmaintenance
       lineinfile:
