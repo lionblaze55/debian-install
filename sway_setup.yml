@@ -90,12 +90,11 @@
         daemon_reload: yes
       when: zram_config.changed
 
-    - name: Purge incorrect root fstab entries (Cleanup)
-      mount:
-        path: /
-        # If we are on jdesktop, remove the jlaptop line (and vice versa)
-        src: "/dev/mapper/{{ 'jlaptop' if ansible_hostname == 'jdesktop' else 'jdesktop' }}--vg-root"
-        fstype: btrfs
+    - name: Purge ghost root entry (Safely delete line only)
+      lineinfile:
+        path: /etc/fstab
+        # If hostname is jdesktop, regex matches jlaptop (and vice versa)
+        regexp: "^/dev/mapper/{{ 'jlaptop' if ansible_hostname == 'jdesktop' else 'jdesktop' }}--vg-root"
         state: absent
 
     - name: Optimize Btrfs Mounts (Host Aware)
@@ -106,11 +105,9 @@
         opts: "{{ item.opts }}"
         dump: "0"
         passno: "0"
-        state: present
+        state: present  # "present" only modifies fstab; it does NOT trigger mount/umount
       loop:
-        # Dynamically builds the root path based on the current machine's hostname
         - { dev: "/dev/mapper/{{ ansible_hostname }}--vg-root", mnt: '/', opts: 'defaults,subvol=@rootfs,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag' }
-        # Storage drives (These stay constant across both machines)
         - { dev: 'UUID=5efd422d-9ce0-49a4-b4b7-dfba42d9e434', mnt: '/mnt/z', opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail,x-gvfs-show,x-gvfs-name=z' }
         - { dev: 'UUID=d59767b0-cc74-4acc-93fb-25e24f53449e', mnt: '/mnt/g', opts: 'defaults,noatime,compress=zstd:1,ssd,discard=async,space_cache=v2,autodefrag,nosuid,nodev,nofail,x-gvfs-show,x-gvfs-name=g' }
 
