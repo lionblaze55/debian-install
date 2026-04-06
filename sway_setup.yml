@@ -84,6 +84,13 @@
       command: flatpak uninstall --unused -y
       changed_when: false
 
+    - name: Add the current Ansible user to lpadmin group
+      ansible.builtin.user:
+        name: "{{ jfaber }}"
+        groups: lpadmin
+        append: yes
+      become: yes
+  
     - name: Configure NetworkManager
       block:
         - name: Set NetworkManager to managed=true
