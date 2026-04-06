@@ -86,7 +86,7 @@
 
     - name: Add the current Ansible user to lpadmin group
       ansible.builtin.user:
-        name: "{{ jfaber }}"
+        name: "{{ lookup('env', 'USER') }}"
         groups: lpadmin
         append: yes
       become: yes
