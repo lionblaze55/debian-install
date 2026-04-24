@@ -220,6 +220,12 @@
         - { port: 22000, proto: 'tcp' }
         - { port: 22000, proto: 'udp' }
         - { port: 21027, proto: 'udp' }
+        # Arma 3 Server Ports
+        - { port: 2302, proto: 'udp' }  # Game Port
+        - { port: 2303, proto: 'udp' }  # Steam Query Port
+        - { port: 2304, proto: 'udp' }  # Steam Master/BattleEye
+        - { port: 2305, proto: 'udp' }  # Von/BattleEye
+        - { port: 2306, proto: 'udp' }  # BattleEye (extended)
 
     - name: Enable Firewall
       ufw:
