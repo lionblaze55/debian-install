@@ -217,6 +217,7 @@
         port: "{{ item.port | string }}"
         proto: "{{ item.proto }}"
       loop:
+        # Syncthing ports
         - { port: 22000, proto: 'tcp' }
         - { port: 22000, proto: 'udp' }
         - { port: 21027, proto: 'udp' }
