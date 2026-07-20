@@ -15,5 +15,6 @@ org.kde.gwenview
 org.kde.kate
 org.kde.okular
 org.keepassxc.KeePassXC
+org.mozilla.thunderbird_esr
 org.signal.Signal
 org.virt_manager.virt-manager
